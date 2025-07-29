@@ -31,7 +31,7 @@ BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSv
 # !!! 중요: 조회하고 싶은 '계약년월' 목록을 여기에 추가하세요. !!!
 # 예: ['202401'] -> 1월 데이터를 가져옵니다.
 # 테스트를 위해서는 실제 데이터가 있는 과거 날짜로 설정하세요.
-MONTHS_TO_FETCH = ['202401'] 
+MONTHS_TO_FETCH = ['202507'] 
 
 # --- 아래 클래스 추가 ---
 # 보안 프로토콜을 TLSv1.2로 강제하기 위한 어댑터 클래스 정의
