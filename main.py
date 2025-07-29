@@ -6,48 +6,38 @@ from gspread_dataframe import set_with_dataframe
 from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 import time
-# --- 아래 3줄 추가 ---
 import ssl
 from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
 
-# --- 1. 설정 (Configuration) ---
+# --- 이 부분이 핵심 수정 사항 ---
+# 오래된 서버와의 호환성을 위해 특정 Cipher Suite를 사용하는 SSL Context 생성
+# OpenSSL의 보안 레벨을 낮춰 더 넓은 범위의 암호화 방식을 허용
+class CustomHttpAdapter(HTTPAdapter):
+    def __init__(self, *args, **kwargs):
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
+        super().__init__(*args, **kwargs)
 
-# GitHub Secrets에서 환경 변수를 통해 키를 불러옵니다.
-SERVICE_KEY = os.getenv('SERVICE_KEY')
-
-# 구글 서비스 계정 키 파일 경로 (GitHub Actions에서 생성됨)
-GOOGLE_CREDENTIALS_PATH = 'credentials.json'
-
-# 데이터를 업로드할 구글 시트 이름
-GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적' 
-
-# 법정동 코드 파일 경로
-LAWD_CODE_FILE = 'lawd_code.csv'
-
-# API 기본 URL
-BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
-
-# !!! 중요: 조회하고 싶은 '계약년월' 목록을 여기에 추가하세요. !!!
-# 예: ['202401'] -> 1월 데이터를 가져옵니다.
-# 테스트를 위해서는 실제 데이터가 있는 과거 날짜로 설정하세요.
-MONTHS_TO_FETCH = ['202507'] 
-
-# --- 아래 클래스 추가 ---
-# 보안 프로토콜을 TLSv1.2로 강제하기 위한 어댑터 클래스 정의
-class TLSv1_2Adapter(HTTPAdapter):
     def init_poolmanager(self, connections, maxsize, block=False):
-        self.poolmanager = PoolManager(
+        self.poolmanager = requests.packages.urllib3.PoolManager(
             num_pools=connections,
             maxsize=maxsize,
             block=block,
-            ssl_version=ssl.PROTOCOL_TLSv1_2,
+            ssl_context=self.ssl_context
         )
+
+# --- 1. 설정 (Configuration) ---
+
+SERVICE_KEY = os.getenv('SERVICE_KEY')
+GOOGLE_CREDENTIALS_PATH = 'credentials.json'
+GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적' 
+LAWD_CODE_FILE = 'lawd_code.csv'
+BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
+MONTHS_TO_FETCH = ['202507'] 
 
 # --- 2. 함수 정의 (Functions) ---
 
 def get_lawd_codes(filepath):
-    """CSV 파일에서 법정동 코드 목록을 읽어옵니다."""
     try:
         df = pd.read_csv(filepath)
         print(f"총 {len(df['code'])}개의 지역 코드를 불러왔습니다.")
@@ -56,9 +46,7 @@ def get_lawd_codes(filepath):
         print(f"오류: {filepath} 파일을 찾을 수 없습니다.")
         return []
 
-# --- 'session' 인자를 받도록 함수 수정 ---
 def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
-    """특정 지역, 특정 월의 데이터를 API로부터 가져옵니다."""
     all_items = []
     page_no = 1
     
@@ -71,7 +59,6 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             'numOfRows': '1000'
         }
         try:
-            # --- requests.get을 session.get으로 변경 ---
             response = session.get(BASE_URL, params=params, timeout=30)
             response.raise_for_status()
             root = ET.fromstring(response.content)
@@ -107,48 +94,35 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
 
 
 def create_unique_id(df):
-    """데이터프레임에 고유 ID 열을 생성합니다."""
-    # 고유 식별을 위한 컬럼 목록 (API 응답 명세서 기준)
-    id_cols = [
-        '일련번호', '거래금액', '년', '월', '일', 
-        '전용면적', '지번', '층', '법정동'
-    ]
-    
-    # 데이터프레임에 존재하는 컬럼만으로 ID 생성
+    id_cols = ['일련번호', '거래금액', '년', '월', '일', '전용면적', '지번', '층', '법정동']
     valid_cols = [col for col in id_cols if col in df.columns]
     if not valid_cols:
         print("고유 ID를 생성할 컬럼이 부족합니다.")
         return None
-
-    # 모든 값을 문자열로 변환하여 합치기
     df['unique_id'] = df[valid_cols].astype(str).apply(lambda x: '_'.join(x), axis=1)
     return df
 
 
 def main():
-    """전체 프로세스를 실행하는 메인 함수"""
     print("="*50)
     print("전국 아파트 실거래가 누적 업데이트를 시작합니다.")
     print(f"대상 월: {MONTHS_TO_FETCH}")
     print("="*50)
     
-    # 1. API로 새로운 데이터 가져오기
     lawd_codes = get_lawd_codes(LAWD_CODE_FILE)
     if not lawd_codes: return
 
     all_new_data = []
     
-    # --- 아래 3줄 코드 추가 ---
-    # TLSv1.2를 사용하는 세션 생성
+    # --- 우리가 만든 CustomHttpAdapter를 사용하는 세션 생성 ---
     session = requests.Session()
-    session.mount('https://', TLSv1_2Adapter())
+    session.mount('https://', CustomHttpAdapter())
 
     total_regions = len(lawd_codes)
     for month in MONTHS_TO_FETCH:
         print(f"\n--- {month} 데이터 수집 시작 ---")
         for i, code in enumerate(lawd_codes):
             print(f"\r  [{i+1}/{total_regions}] {code} 수집 중...", end="")
-            # --- 함수 호출 시 session 전달하도록 수정 ---
             region_data = fetch_data_for_region(session, code, month, SERVICE_KEY)
             if region_data:
                 all_new_data.extend(region_data)
@@ -161,7 +135,6 @@ def main():
     df_new = pd.DataFrame(all_new_data)
     print(f"\nAPI로부터 총 {len(df_new)}건의 데이터를 수집했습니다.")
 
-    # 2. 구글 시트에서 기존 데이터 읽기
     print("\n구글 시트에서 기존 데이터를 읽어옵니다...")
     try:
         gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_PATH)
@@ -175,10 +148,6 @@ def main():
     except Exception as e:
         print(f"구글 시트 읽기 중 오류 발생: {e}")
         return
-
-    # 3. 데이터 비교 및 결합
-    if not df_existing.empty:
-        pass
 
     df_new = create_unique_id(df_new)
     if not df_existing.empty:
@@ -198,9 +167,7 @@ def main():
     if 'unique_id' in newly_added_df.columns:
         newly_added_df.drop(columns=['unique_id'], inplace=True)
         
-    # 4. 최종 데이터를 구글 시트에 추가 (Append)
     print("\n신규 데이터를 시트 마지막에 추가합니다...")
-    # 시트가 비어있을 경우 헤더를 포함하여 데이터를 쓰고, 그렇지 않으면 데이터만 추가
     if df_existing.empty:
         set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
     else:
@@ -214,8 +181,6 @@ def main():
     print(f"추가된 데이터 건수: {len(newly_added_df)}")
     print("="*50)
 
-
-# --- 3. 메인 실행 로직 ---
 if __name__ == '__main__':
     if not SERVICE_KEY:
         print("오류: SERVICE_KEY 환경 변수가 설정되지 않았습니다.")
