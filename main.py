@@ -27,7 +27,7 @@ BASE_URL = 'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/R
 # !!! 중요: 조회하고 싶은 '계약년월' 목록을 여기에 추가하세요. !!!
 # 예: ['202406', '202407'] -> 6월과 7월 데이터를 모두 가져옵니다.
 # 테스트를 위해서는 실제 데이터가 있는 과거 날짜로 설정하세요. (예: ['202401', '202402'])
-MONTHS_TO_FETCH = ['202405', '202406'] 
+MONTHS_TO_FETCH = ['202506'] 
 
 
 # --- 2. 함수 정의 (Functions) ---
