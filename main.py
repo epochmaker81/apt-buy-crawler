@@ -64,7 +64,7 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             root = ET.fromstring(response.content)
             result_code = root.find('header/resultCode').text
             
-            if result_code != '00':
+            if result_code != '000':
                 if result_code != '04':
                     print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code}, 메시지: {root.find('header/resultMsg').text}")
                 break
