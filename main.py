@@ -25,7 +25,7 @@ class CustomHttpAdapter(HTTPAdapter):
 
 SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_PATH = 'credentials.json'
-GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적' 
+GOOGLE_SHEET_NAME = '전국 아파트 실거래가_누적' 
 LAWD_CODE_FILE = 'lawd_code.csv'
 BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
 MONTHS_TO_FETCH = ['202507'] 
