@@ -20,7 +20,7 @@ SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_PATH = 'credentials.json'
 
 # 데이터를 업로드할 구글 시트 이름
-GOOGLE_SHEET_NAME = '전국 아파트 실거래가_누적' 
+GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적' 
 
 # 법정동 코드 파일 경로
 LAWD_CODE_FILE = 'lawd_code.csv'
