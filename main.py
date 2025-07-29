@@ -9,7 +9,6 @@ import time
 import ssl
 from requests.adapters import HTTPAdapter
 
-# 오래된 서버와의 호환성을 위해 특정 Cipher Suite를 사용하는 SSL Context 생성
 class CustomHttpAdapter(HTTPAdapter):
     def __init__(self, *args, **kwargs):
         self.ssl_context = ssl.create_default_context()
@@ -17,7 +16,6 @@ class CustomHttpAdapter(HTTPAdapter):
         super().__init__(*args, **kwargs)
 
     def init_poolmanager(self, connections, maxsize, block=False):
-        # requests.packages.urllib3 대신 requests.urllib3를 사용하도록 명시
         self.poolmanager = requests.urllib3.PoolManager(
             num_pools=connections,
             maxsize=maxsize,
@@ -25,16 +23,12 @@ class CustomHttpAdapter(HTTPAdapter):
             ssl_context=self.ssl_context
         )
 
-# --- 1. 설정 (Configuration) ---
-
 SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_PATH = 'credentials.json'
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적' 
 LAWD_CODE_FILE = 'lawd_code.csv'
 BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
 MONTHS_TO_FETCH = ['202507'] 
-
-# --- 2. 함수 정의 (Functions) ---
 
 def get_lawd_codes(filepath):
     try:
@@ -61,11 +55,24 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             response = session.get(BASE_URL, params=params, timeout=30)
             response.raise_for_status()
             root = ET.fromstring(response.content)
-            result_code = root.find('header/resultCode').text
+
+            # --- 이 부분이 최종 수정 사항 ---
+            header = root.find('header')
+            if header is None:
+                print(f"  [API 응답 형식 오류] 지역코드: {lawd_cd}, 응답에 header가 없습니다.")
+                break
+            
+            result_code_element = header.find('resultCode')
+            if result_code_element is None:
+                print(f"  [API 응답 형식 오류] 지역코드: {lawd_cd}, 응답에 resultCode가 없습니다.")
+                break
+                
+            result_code = result_code_element.text
             
             if result_code != '000':
-                if result_code != '04':
-                    print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code}, 메시지: {root.find('header/resultMsg').text}")
+                # 서비스 트래픽 제한(22)이나 데이터 없음(04) 등은 정상적인 종료로 간주
+                if result_code not in ['04', '22']:
+                    print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code}, 메시지: {header.find('resultMsg').text}")
                 break
             
             items_element = root.find('body/items')
@@ -92,30 +99,17 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
     return all_items
 
 
-# --- 이 함수가 핵심 수정 사항 ---
 def create_unique_id(df):
-    """데이터프레임에 고유 ID 열을 생성합니다."""
     if df is None or df.empty:
         return df
-
-    # API 실제 응답에 기반한 컬럼 후보 목록
-    id_cols = [
-        'aptSeq', 'dealAmount', 'dealYear', 'dealMonth', 'dealDay',
-        'excluUseAr', 'jibun', 'floor', 'sggCd', 'umdCd'
-    ]
-    
-    # 데이터프레임에 실제로 존재하는 컬럼만으로 ID 생성
+    id_cols = ['aptSeq', 'dealAmount', 'dealYear', 'dealMonth', 'dealDay', 'excluUseAr', 'jibun', 'floor', 'sggCd', 'umdCd']
     valid_cols = [col for col in id_cols if col in df.columns]
-    
     if not valid_cols:
         print("고유 ID를 생성할 컬럼이 부족하여 ID 생성을 건너뜁니다.")
-        return df # ID 생성 실패 시 unique_id 컬럼 없이 원본 반환
-
-    # 모든 값을 문자열로 변환하여 합치기
+        return df
     print(f"고유 ID 생성을 위해 사용되는 컬럼: {valid_cols}")
     df['unique_id'] = df[valid_cols].astype(str).agg('_'.join, axis=1)
     return df
-
 
 def main():
     print("="*50)
@@ -167,17 +161,14 @@ def main():
         df_existing = create_unique_id(df_existing)
     
     if not df_existing.empty:
-        # 두 DataFrame 모두에 'unique_id' 컬럼이 있는 경우에만 중복 제거 수행
         if 'unique_id' in df_new.columns and 'unique_id' in df_existing.columns:
             newly_added_df = df_new[~df_new['unique_id'].isin(df_existing['unique_id'])]
         else:
-            # 한쪽에라도 unique_id가 없으면 중복 제거를 건너뛰고 모든 새 데이터를 추가 대상으로 간주
             print("경고: 고유 ID가 없어 중복 제거를 건너뛰고 모든 새 데이터를 추가합니다.")
             newly_added_df = df_new
     else:
         newly_added_df = df_new
     
-    # --- 'NoneType' 에러를 방지하기 위한 수정 ---
     if newly_added_df is None or newly_added_df.empty:
         print("\n추가할 새로운 거래 데이터가 없습니다. 프로세스를 종료합니다.")
         return
@@ -191,26 +182,20 @@ def main():
     if df_existing.empty:
         set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
     else:
-        # 기존 시트의 헤더와 새 데이터의 컬럼 순서를 일치시킨 후 추가
-        # 이는 gspread가 순서대로 값을 넣기 때문에 발생할 수 있는 오류를 방지
         try:
             sheet_headers = list(df_existing.columns)
             if 'unique_id' in sheet_headers:
                 sheet_headers.remove('unique_id')
-            
-            # 시트 헤더 순서대로 새 데이터 정렬
             newly_added_df_aligned = newly_added_df[sheet_headers]
             worksheet.append_rows(
                 newly_added_df_aligned.values.tolist(), 
                 value_input_option='USER_ENTERED'
             )
         except Exception:
-             # 순서 정렬에 실패할 경우, 그냥 원래대로 추가 시도
             worksheet.append_rows(
                 newly_added_df.values.tolist(), 
                 value_input_option='USER_ENTERED'
             )
-
     
     print("="*50)
     print("구글 시트 업데이트가 성공적으로 완료되었습니다!")
