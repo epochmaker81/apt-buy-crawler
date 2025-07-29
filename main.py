@@ -22,7 +22,7 @@ GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
 
 # API 기본 URL
-BASE_URL = 'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
+BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
 
 # !!! 중요: 조회하고 싶은 '계약년월' 목록을 여기에 추가하세요. !!!
 # 예: ['202406', '202407'] -> 6월과 7월 데이터를 모두 가져옵니다.
