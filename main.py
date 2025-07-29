@@ -56,7 +56,6 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             response.raise_for_status()
             root = ET.fromstring(response.content)
 
-            # --- 이 부분이 최종 수정 사항 ---
             header = root.find('header')
             if header is None:
                 print(f"  [API 응답 형식 오류] 지역코드: {lawd_cd}, 응답에 header가 없습니다.")
@@ -70,9 +69,10 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             result_code = result_code_element.text
             
             if result_code != '000':
-                # 서비스 트래픽 제한(22)이나 데이터 없음(04) 등은 정상적인 종료로 간주
                 if result_code not in ['04', '22']:
-                    print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code}, 메시지: {header.find('resultMsg').text}")
+                    msg_element = header.find('resultMsg')
+                    msg = msg_element.text if msg_element is not None else "메시지 없음"
+                    print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code}, 메시지: {msg}")
                 break
             
             items_element = root.find('body/items')
@@ -97,7 +97,6 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             break
 
     return all_items
-
 
 def create_unique_id(df):
     if df is None or df.empty:
@@ -143,6 +142,8 @@ def main():
     print(f"\nAPI로부터 총 {len(df_new)}건의 데이터를 수집했습니다.")
 
     print("\n구글 시트에서 기존 데이터를 읽어옵니다...")
+    worksheet = None  #<-- 변수를 미리 선언
+    df_existing = pd.DataFrame() #<-- 변수를 미리 선언
     try:
         gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_PATH)
         sh = gc.open(GOOGLE_SHEET_NAME)
@@ -151,7 +152,7 @@ def main():
         df_existing = pd.DataFrame(existing_records)
     except gspread.exceptions.SpreadsheetNotFound:
         print(f"경고: '{GOOGLE_SHEET_NAME}' 시트를 찾을 수 없습니다. 시트가 비어있는 것으로 간주하고 진행합니다.")
-        df_existing = pd.DataFrame()
+        # worksheet 변수는 None으로 유지됨
     except Exception as e:
         print(f"구글 시트 읽기 중 오류 발생: {e}")
         return
@@ -179,7 +180,21 @@ def main():
         newly_added_df = newly_added_df.drop(columns=['unique_id'])
         
     print("\n신규 데이터를 시트 마지막에 추가합니다...")
-    if df_existing.empty:
+    # --- worksheet가 없을 경우에 대한 처리 추가 ---
+    if worksheet is None:
+        try:
+            # 시트가 없었으므로 새로 만들고 데이터를 씀
+            sh = gc.create(GOOGLE_SHEET_NAME)
+            # 서비스 계정에 권한을 줘야 다음 실행부터 접근 가능
+            sh.share(os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL', '서비스 계정 이메일을 Secrets에 등록하세요'), perm_type='user', role='writer')
+            worksheet = sh.get_worksheet(0)
+            set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
+        except Exception as e:
+            print(f"새 시트 생성 및 쓰기 중 오류 발생: {e}")
+            print("팁: 구글 드라이브에서 '전국 아파트 실거래가_누적' 파일을 직접 만들고 서비스 계정에 공유해주세요.")
+            return
+    elif df_existing.empty:
+        # 시트는 있었지만 비어있는 경우
         set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
     else:
         try:
