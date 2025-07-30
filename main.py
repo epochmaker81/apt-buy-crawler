@@ -28,7 +28,7 @@ GOOGLE_CREDENTIALS_PATH = 'credentials.json'
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적' 
 LAWD_CODE_FILE = 'lawd_code.csv'
 BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
-MONTHS_TO_FETCH = ['202507'] 
+MONTHS_TO_FETCH = ['202501', '202502', '202503', '202504', '202505', '202506', '202507', '202508', '202509', '202510', '202511', '202512']
 
 def get_lawd_codes(filepath):
     try:
