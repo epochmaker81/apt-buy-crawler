@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (HTTPS 수정 완료) >>>
+# <<< 최종 버전 main.py (재시도 로직 추가) >>>
 
 import os
 import requests
@@ -32,7 +32,6 @@ SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
-# [수정] http -> https 로 변경
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
 
 # --- 설정: 수집할 연월 동적 생성 (최근 3개월) ---
@@ -64,7 +63,7 @@ def get_lawd_codes(filepath):
         return []
 
 def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
-    all_items = []
+    """지정한 지역 코드와 연월의 데이터를 API로 조회합니다 (최대 3회 재시도)."""
     params = {
         'serviceKey': service_key,
         'LAWD_CD': lawd_cd,
@@ -72,33 +71,46 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
         'pageNo': '1',
         'numOfRows': '5000'
     }
-    try:
-        response = session.get(BASE_URL, params=params, timeout=60)
-        response.raise_for_status()
-        root = ET.fromstring(response.content)
 
-        result_code_element = root.find('header/resultCode')
-        if result_code_element is None or result_code_element.text != '00':
-            if result_code_element is None or result_code_element.text != '99':
-                msg_element = root.find('header/resultMsg')
-                msg = msg_element.text if msg_element is not None else "메시지 없음"
-                print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code_element.text if result_code_element is not None else 'N/A'}, 메시지: {msg}")
-            return []
+    # 최대 3번까지 재시도
+    for attempt in range(3):
+        try:
+            response = session.get(BASE_URL, params=params, timeout=60)
+            response.raise_for_status() # 200 OK가 아니면 오류 발생
 
-        items_element = root.find('body/items')
-        if items_element is None: return []
-        
-        for item in items_element.findall('item'):
-            item_dict = {child.tag: child.text.strip() if child.text else '' for child in item}
-            all_items.append(item_dict)
-        
-        time.sleep(0.1)
-    except requests.exceptions.RequestException as e:
-        # 오류 메시지를 좀 더 명확하게 출력
-        print(f"  [네트워크 오류] 지역코드: {lawd_cd}, 오류: {e}")
-    except ET.ParseError:
-        print(f"  [XML 파싱 오류] 지역코드: {lawd_cd}")
-    return all_items
+            # --- 성공 시 로직 실행 ---
+            all_items = []
+            root = ET.fromstring(response.content)
+
+            result_code_element = root.find('header/resultCode')
+            if result_code_element is None or result_code_element.text != '00':
+                if result_code_element is None or result_code_element.text != '99': # 데이터 없는 정상 오류(99)는 출력 안함
+                    msg_element = root.find('header/resultMsg')
+                    msg = msg_element.text if msg_element is not None else "메시지 없음"
+                    print(f"\n  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code_element.text if result_code_element is not None else 'N/A'}, 메시지: {msg}")
+                return []
+
+            items_element = root.find('body/items')
+            if items_element is None: return []
+            
+            for item in items_element.findall('item'):
+                item_dict = {child.tag: child.text.strip() if child.text else '' for child in item}
+                all_items.append(item_dict)
+            
+            # 성공했으면 재시도 루프 탈출
+            return all_items
+
+        except requests.exceptions.RequestException as e:
+            print(f"\n  [네트워크 오류] 지역코드: {lawd_cd} (시도 {attempt + 1}/3). 잠시 후 재시도합니다. 오류 유형: {type(e).__name__}")
+            time.sleep(3) # 3초 대기 후 재시도
+        except ET.ParseError as e:
+            print(f"\n  [XML 파싱 오류] 지역코드: {lawd_cd}, 오류: {e}")
+            return [] # 파싱 오류는 재시도해도 소용없으므로 바로 종료
+
+    # for 루프가 break 없이 모두 실패(3회 재시도 실패)했을 경우
+    print(f"\n  [네트워크 오류] 지역코드: {lawd_cd}, 최종 접속 실패.")
+    return [] # 빈 리스트 반환
+
 
 def create_unique_id(df):
     if df.empty: return df
@@ -118,7 +130,6 @@ def main():
     if not lawd_codes: return
 
     session = requests.Session()
-    # [수정] http -> https 에 마운트
     session.mount('https://', CustomHttpAdapter())
 
     all_new_data = []
@@ -133,6 +144,7 @@ def main():
             region_data = fetch_data_for_region(session, code, month, SERVICE_KEY)
             if region_data:
                 all_new_data.extend(region_data)
+            time.sleep(0.1) # 각 지역코드 요청 후 잠시 대기
     
     if not all_new_data:
         print("\n\nAPI로부터 수집된 새로운 데이터가 없습니다. 프로세스를 종료합니다.")
