@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (최근 3개월 수집) >>>
+# <<< 최종 버전 main.py (HTTPS 수정 완료) >>>
 
 import os
 import requests
@@ -11,7 +11,7 @@ import ssl
 from requests.adapters import HTTPAdapter
 import json
 from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta # 최근 3개월 계산을 위해 추가
+from dateutil.relativedelta import relativedelta
 
 class CustomHttpAdapter(HTTPAdapter):
     def __init__(self, *args, **kwargs):
@@ -32,18 +32,15 @@ SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
-BASE_URL = 'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
+# [수정] http -> https 로 변경
+BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
 
 # --- 설정: 수집할 연월 동적 생성 (최근 3개월) ---
-# 매일 실행되므로, 현재 월을 포함한 최근 3개월치 데이터를 수집하도록 설정합니다.
-# GitHub Actions는 UTC 기준이므로, 한국 시간(KST)에 맞춰 9시간을 더합니다.
 today_kst = datetime.utcnow() + timedelta(hours=9)
 MONTHS_TO_FETCH = []
-for i in range(3): # 0, 1, 2 (총 3번 반복)
-    # 현재 달, 한 달 전, 두 달 전 날짜를 계산
+for i in range(3):
     target_date = today_kst - relativedelta(months=i)
     MONTHS_TO_FETCH.append(target_date.strftime('%Y%m'))
-
 
 def get_google_creds():
     """GitHub Secrets에서 가져온 JSON 문자열을 딕셔너리로 변환"""
@@ -73,7 +70,7 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
         'LAWD_CD': lawd_cd,
         'DEAL_YMD': deal_ymd,
         'pageNo': '1',
-        'numOfRows': '5000' # 최대치로 설정
+        'numOfRows': '5000'
     }
     try:
         response = session.get(BASE_URL, params=params, timeout=60)
@@ -82,10 +79,10 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
 
         result_code_element = root.find('header/resultCode')
         if result_code_element is None or result_code_element.text != '00':
-            msg_element = root.find('header/resultMsg')
-            msg = msg_element.text if msg_element is not None else "메시지 없음"
-            if result_code_element is None or result_code_element.text != '99': # 데이터 없는 정상 오류는 출력 안함
-                 print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code_element.text if result_code_element is not None else 'N/A'}, 메시지: {msg}")
+            if result_code_element is None or result_code_element.text != '99':
+                msg_element = root.find('header/resultMsg')
+                msg = msg_element.text if msg_element is not None else "메시지 없음"
+                print(f"  [API 응답 오류] 지역코드: {lawd_cd}, 코드: {result_code_element.text if result_code_element is not None else 'N/A'}, 메시지: {msg}")
             return []
 
         items_element = root.find('body/items')
@@ -97,6 +94,7 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
         
         time.sleep(0.1)
     except requests.exceptions.RequestException as e:
+        # 오류 메시지를 좀 더 명확하게 출력
         print(f"  [네트워크 오류] 지역코드: {lawd_cd}, 오류: {e}")
     except ET.ParseError:
         print(f"  [XML 파싱 오류] 지역코드: {lawd_cd}")
@@ -120,16 +118,18 @@ def main():
     if not lawd_codes: return
 
     session = requests.Session()
-    session.mount('http://', CustomHttpAdapter())
+    # [수정] http -> https 에 마운트
+    session.mount('https://', CustomHttpAdapter())
 
     all_new_data = []
     total_regions = len(lawd_codes)
-    processed_regions = 0
+    total_tasks = total_regions * len(MONTHS_TO_FETCH)
+    processed_tasks = 0
     for month in MONTHS_TO_FETCH:
         print(f"\n--- {month} 데이터 수집 시작 ---")
         for code in lawd_codes:
-            processed_regions += 1
-            print(f"\r  [{processed_regions}/{total_regions*len(MONTHS_TO_FETCH)}] {code} 수집 중...", end="", flush=True)
+            processed_tasks += 1
+            print(f"\r  [{processed_tasks}/{total_tasks}] {code} 수집 중...", end="", flush=True)
             region_data = fetch_data_for_region(session, code, month, SERVICE_KEY)
             if region_data:
                 all_new_data.extend(region_data)
@@ -157,7 +157,7 @@ def main():
     except gspread.exceptions.SpreadsheetNotFound:
         print(f"경고: '{GOOGLE_SHEET_NAME}' 시트를 찾을 수 없어 새로 생성합니다.")
         df_existing = pd.DataFrame()
-        worksheet = None # 새로 만들어야 함을 표시
+        worksheet = None
     except Exception as e:
         print(f"구글 시트 처리 중 오류 발생: {e}")
         return
@@ -178,17 +178,16 @@ def main():
         newly_added_df.drop(columns=['unique_id'], inplace=True)
 
     try:
-        if worksheet is None: # 시트가 없어서 새로 만들어야 하는 경우
+        if worksheet is None:
             sh = gc.create(GOOGLE_SHEET_NAME)
             worksheet = sh.get_worksheet(0)
             service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
             if service_account_email:
                 sh.share(service_account_email, perm_type='user', role='writer')
             set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
-        elif df_existing.empty: # 시트는 있지만 비어있는 경우
+        elif df_existing.empty:
             set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
-        else: # 기존 데이터가 있는 경우
-            # 기존 시트 헤더 순서에 새 데이터를 맞춤
+        else:
             sheet_headers = [col.strip() for col in worksheet.row_values(1)]
             df_to_append = pd.DataFrame(columns=sheet_headers)
             for col in sheet_headers:
