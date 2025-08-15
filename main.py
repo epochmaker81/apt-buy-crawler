@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (디버깅 메시지 강화) >>>
+# <<< 최종 버전 main.py (메모리 문제 해결 + 디버깅 메시지 강화) >>>
 
 import os
 import requests
@@ -13,7 +13,6 @@ import json
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
-# --- (이전과 동일한 부분) ---
 class CustomHttpAdapter(HTTPAdapter):
     def __init__(self, *args, **kwargs):
         self.ssl_context = ssl.create_default_context()
@@ -36,7 +35,6 @@ for i in range(3):
     target_date = today_kst - relativedelta(months=i)
     MONTHS_TO_FETCH.append(target_date.strftime('%Y%m'))
 
-# [수정] get_google_creds 함수에 print문 추가
 def get_google_creds():
     """GitHub Secrets에서 가져온 JSON 문자열을 딕셔너리로 변환"""
     if GOOGLE_CREDENTIALS_JSON is None:
@@ -49,7 +47,6 @@ def get_google_creds():
         print("오류: 'GOOGLE_CREDENTIALS_JSON' Secret의 값이 유효한 JSON 형식이 아닙니다. 내용을 확인해주세요.")
         return None
 
-# --- (이전과 동일한 함수들) ---
 def get_lawd_codes(filepath):
     try:
         df = pd.read_csv(filepath)
@@ -101,7 +98,7 @@ def update_google_sheet(df_new, gc):
     try:
         sh = gc.open(GOOGLE_SHEET_NAME)
         worksheet = sh.get_worksheet(0)
-        print("구글 시트에서 기존 데이터를 읽어옵니다...")
+        print("\n구글 시트에서 기존 데이터를 읽어옵니다...")
         existing_records = worksheet.get_all_records()
         df_existing = pd.DataFrame(existing_records)
         if not df_existing.empty:
@@ -147,12 +144,8 @@ def update_google_sheet(df_new, gc):
         return -1
 
 def main():
-    # [수정] 시작 부분의 환경 변수 체크 강화
-    if not SERVICE_KEY:
-        print("오류: GitHub Secrets에 'SERVICE_KEY'가 설정되지 않았습니다. 확인해주세요.")
-        return
-    if not GOOGLE_CREDENTIALS_JSON:
-        print("오류: GitHub Secrets에 'GOOGLE_CREDENTIALS_JSON'이 설정되지 않았습니다. 확인해주세요.")
+    if not SERVICE_KEY or not GOOGLE_CREDENTIALS_JSON:
+        print("오류: SERVICE_KEY 또는 GOOGLE_CREDENTIALS_JSON Secret이 설정되지 않았습니다.")
         return
 
     print(f"===== 전국 아파트 실거래가 업데이트 시작 (대상 월: {MONTHS_TO_FETCH}) =====")
@@ -164,9 +157,7 @@ def main():
     session.mount('https://', CustomHttpAdapter())
     
     creds = get_google_creds()
-    if not creds:
-        # get_google_creds 함수 내부에서 원인을 출력하므로 여기서는 그냥 종료
-        return
+    if not creds: return
     
     gc = gspread.service_account_from_dict(creds)
     total_added_count = 0
