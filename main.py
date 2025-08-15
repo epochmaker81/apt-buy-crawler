@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (메모리 문제 해결) >>>
+# <<< 최종 버전 main.py (디버깅 메시지 강화) >>>
 
 import os
 import requests
@@ -13,8 +13,8 @@ import json
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
+# --- (이전과 동일한 부분) ---
 class CustomHttpAdapter(HTTPAdapter):
-    # ... (이전과 동일)
     def __init__(self, *args, **kwargs):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
@@ -24,29 +24,33 @@ class CustomHttpAdapter(HTTPAdapter):
             num_pools=connections, maxsize=maxsize, block=block, ssl_context=self.ssl_context
         )
 
-# --- 설정 변수 (이전과 동일) ---
 SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
 
-# --- 수집할 연월 동적 생성 (이전과 동일) ---
 today_kst = datetime.utcnow() + timedelta(hours=9)
 MONTHS_TO_FETCH = []
 for i in range(3):
     target_date = today_kst - relativedelta(months=i)
     MONTHS_TO_FETCH.append(target_date.strftime('%Y%m'))
 
-# --- 함수 정의 (이전과 동일, 일부 수정) ---
+# [수정] get_google_creds 함수에 print문 추가
 def get_google_creds():
-    # ... (이전과 동일)
-    if GOOGLE_CREDENTIALS_JSON is None: return None
-    try: return json.loads(GOOGLE_CREDENTIALS_JSON)
-    except json.JSONDecodeError: return None
+    """GitHub Secrets에서 가져온 JSON 문자열을 딕셔너리로 변환"""
+    if GOOGLE_CREDENTIALS_JSON is None:
+        print("오류: GitHub Secrets에 'GOOGLE_CREDENTIALS_JSON'이 설정되지 않았거나 이름이 다릅니다.")
+        return None
+    try:
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        return creds_dict
+    except json.JSONDecodeError:
+        print("오류: 'GOOGLE_CREDENTIALS_JSON' Secret의 값이 유효한 JSON 형식이 아닙니다. 내용을 확인해주세요.")
+        return None
 
+# --- (이전과 동일한 함수들) ---
 def get_lawd_codes(filepath):
-    # ... (이전과 동일)
     try:
         df = pd.read_csv(filepath)
         print(f"총 {len(df['code'])}개의 지역 코드를 불러왔습니다.")
@@ -56,7 +60,6 @@ def get_lawd_codes(filepath):
         return []
 
 def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
-    # ... (이전과 동일)
     params = {'serviceKey': service_key, 'LAWD_CD': lawd_cd, 'DEAL_YMD': deal_ymd, 'pageNo': '1', 'numOfRows': '5000'}
     for attempt in range(3):
         try:
@@ -85,20 +88,16 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
     return []
 
 def create_unique_id(df):
-    # ... (이전과 동일)
     if df.empty: return df
     id_cols = ['거래금액', '년', '월', '일', '전용면적', '지번', '층', '법정동시군구코드', '법정동읍면동코드']
     valid_cols = [col for col in id_cols if col in df.columns]
     df['unique_id'] = df[valid_cols].astype(str).agg('_'.join, axis=1)
     return df
 
-# [수정] 구글 시트 업데이트 로직을 별도 함수로 분리
 def update_google_sheet(df_new, gc):
-    """새로운 데이터프레임을 받아 기존 구글 시트와 비교하고 업데이트합니다."""
     if df_new.empty:
         print("업데이트할 신규 데이터가 없습니다.")
         return 0
-
     try:
         sh = gc.open(GOOGLE_SHEET_NAME)
         worksheet = sh.get_worksheet(0)
@@ -113,24 +112,20 @@ def update_google_sheet(df_new, gc):
         worksheet = None
     except Exception as e:
         print(f"구글 시트 처리 중 오류 발생: {e}")
-        return -1 # 오류 발생을 알리기 위해 음수 반환
-
+        return -1
     df_new = create_unique_id(df_new)
     if not df_existing.empty:
         df_existing = create_unique_id(df_existing)
         newly_added_df = df_new[~df_new['unique_id'].isin(df_existing['unique_id'])].copy()
     else:
         newly_added_df = df_new.copy()
-
     if newly_added_df.empty:
         print("추가할 새로운 거래 데이터가 없습니다.")
         return 0
-    
     added_count = len(newly_added_df)
     print(f"총 {added_count}건의 신규 데이터를 확인했습니다. 시트에 추가합니다.")
     if 'unique_id' in newly_added_df.columns:
         newly_added_df.drop(columns=['unique_id'], inplace=True)
-
     try:
         if worksheet is None:
             sh = gc.create(GOOGLE_SHEET_NAME)
@@ -152,8 +147,12 @@ def update_google_sheet(df_new, gc):
         return -1
 
 def main():
-    if not all([SERVICE_KEY, GOOGLE_CREDENTIALS_JSON]):
-        print("오류: 필수 환경 변수가 설정되지 않았습니다.")
+    # [수정] 시작 부분의 환경 변수 체크 강화
+    if not SERVICE_KEY:
+        print("오류: GitHub Secrets에 'SERVICE_KEY'가 설정되지 않았습니다. 확인해주세요.")
+        return
+    if not GOOGLE_CREDENTIALS_JSON:
+        print("오류: GitHub Secrets에 'GOOGLE_CREDENTIALS_JSON'이 설정되지 않았습니다. 확인해주세요.")
         return
 
     print(f"===== 전국 아파트 실거래가 업데이트 시작 (대상 월: {MONTHS_TO_FETCH}) =====")
@@ -165,12 +164,13 @@ def main():
     session.mount('https://', CustomHttpAdapter())
     
     creds = get_google_creds()
-    if not creds: return
+    if not creds:
+        # get_google_creds 함수 내부에서 원인을 출력하므로 여기서는 그냥 종료
+        return
+    
     gc = gspread.service_account_from_dict(creds)
-
     total_added_count = 0
     
-    # [수정] 월별로 루프를 돌면서 처리
     for month in MONTHS_TO_FETCH:
         print(f"\n--- {month} 데이터 처리 시작 ---")
         monthly_data = []
@@ -180,18 +180,13 @@ def main():
             if region_data:
                 monthly_data.extend(region_data)
             time.sleep(0.1)
-
         if not monthly_data:
             print(f"\n{month}월에 수집된 데이터가 없습니다.")
             continue
-
         df_month = pd.DataFrame(monthly_data)
         df_month.columns = df_month.columns.str.strip()
         print(f"\n{month}월 데이터 총 {len(df_month)}건 수집 완료. 구글 시트 업데이트를 시작합니다.")
-
-        # 한 달치 데이터로 시트 업데이트 함수 호출
         added_count = update_google_sheet(df_month, gc)
-        
         if added_count > 0:
             total_added_count += added_count
             print(f"{month}월 데이터 중 {added_count}건 신규 추가 완료.")
