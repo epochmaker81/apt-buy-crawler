@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (날짜 자동 생성 + 메모리 문제 해결 + 디버깅 강화) >>>
+# <<< 최종 버전 main.py (구글 시트 조회 최적화) >>>
 
 import os
 import requests
@@ -29,8 +29,6 @@ GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
 
-# --- 설정: 수집할 연월 동적 생성 (최근 3개월) --- ## <--- 바로 이 부분입니다! ##
-# 이 코드가 실행되면 오늘 날짜를 기준으로 ['202408', '202407', '202406'] 와 같은 리스트가 자동으로 만들어집니다.
 today_kst = datetime.utcnow() + timedelta(hours=9)
 MONTHS_TO_FETCH = []
 for i in range(3):
@@ -38,15 +36,13 @@ for i in range(3):
     MONTHS_TO_FETCH.append(target_date.strftime('%Y%m'))
 
 def get_google_creds():
-    """GitHub Secrets에서 가져온 JSON 문자열을 딕셔너리로 변환"""
     if GOOGLE_CREDENTIALS_JSON is None:
-        print("오류: GitHub Secrets에 'GOOGLE_CREDENTIALS_JSON'이 설정되지 않았거나 이름이 다릅니다.")
+        print("오류: GitHub Secrets에 'GOOGLE_CREDENTIALS_JSON'이 설정되지 않았습니다.")
         return None
     try:
-        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-        return creds_dict
+        return json.loads(GOOGLE_CREDENTIALS_JSON)
     except json.JSONDecodeError:
-        print("오류: 'GOOGLE_CREDENTIALS_JSON' Secret의 값이 유효한 JSON 형식이 아닙니다. 내용을 확인해주세요.")
+        print("오류: 'GOOGLE_CREDENTIALS_JSON' Secret의 값이 유효한 JSON 형식이 아닙니다.")
         return None
 
 def get_lawd_codes(filepath):
@@ -93,57 +89,49 @@ def create_unique_id(df):
     df['unique_id'] = df[valid_cols].astype(str).agg('_'.join, axis=1)
     return df
 
-def update_google_sheet(df_new, gc):
+# [최적화] 함수 구조 변경: 기존 데이터프레임을 파라미터로 받도록 수정
+def find_and_upload_new_data(df_new, df_existing, worksheet):
     if df_new.empty:
         print("업데이트할 신규 데이터가 없습니다.")
-        return 0
-    try:
-        sh = gc.open(GOOGLE_SHEET_NAME)
-        worksheet = sh.get_worksheet(0)
-        print("\n구글 시트에서 기존 데이터를 읽어옵니다...")
-        existing_records = worksheet.get_all_records()
-        df_existing = pd.DataFrame(existing_records)
-        if not df_existing.empty:
-            df_existing.columns = df_existing.columns.str.strip()
-    except gspread.exceptions.SpreadsheetNotFound:
-        print(f"경고: '{GOOGLE_SHEET_NAME}' 시트를 찾을 수 없어 새로 생성합니다.")
-        df_existing = pd.DataFrame()
-        worksheet = None
-    except Exception as e:
-        print(f"구글 시트 처리 중 오류 발생: {e}")
-        return -1
+        return 0, df_existing
+
     df_new = create_unique_id(df_new)
     if not df_existing.empty:
-        df_existing = create_unique_id(df_existing)
+        # unique_id가 없는 경우를 대비하여 미리 생성
+        if 'unique_id' not in df_existing.columns:
+            df_existing = create_unique_id(df_existing)
         newly_added_df = df_new[~df_new['unique_id'].isin(df_existing['unique_id'])].copy()
     else:
         newly_added_df = df_new.copy()
+
     if newly_added_df.empty:
         print("추가할 새로운 거래 데이터가 없습니다.")
-        return 0
+        return 0, df_existing
+    
     added_count = len(newly_added_df)
-    print(f"총 {added_count}건의 신규 데이터를 확인했습니다. 시트에 추가합니다.")
-    if 'unique_id' in newly_added_df.columns:
-        newly_added_df.drop(columns=['unique_id'], inplace=True)
+    print(f"\n총 {added_count}건의 신규 데이터를 확인했습니다. 시트에 추가합니다.")
+    
+    # 원본 데이터프레임에서 unique_id 컬럼 제거
+    df_to_upload = newly_added_df.drop(columns=['unique_id'])
+    
     try:
-        if worksheet is None:
-            sh = gc.create(GOOGLE_SHEET_NAME)
-            worksheet = sh.get_worksheet(0)
-            service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
-            if service_account_email: sh.share(service_account_email, perm_type='user', role='writer')
-            set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
-        elif df_existing.empty:
-            set_with_dataframe(worksheet, newly_added_df, include_index=False, allow_formulas=False)
+        if worksheet.row_count == 1 and worksheet.col_count == 1: # 완전히 비어있는 시트
+             set_with_dataframe(worksheet, df_to_upload, include_index=False, allow_formulas=False)
         else:
             sheet_headers = [col.strip() for col in worksheet.row_values(1)]
-            df_to_append = pd.DataFrame(columns=sheet_headers)
+            df_aligned = pd.DataFrame(columns=sheet_headers)
             for col in sheet_headers:
-                if col in newly_added_df.columns: df_to_append[col] = newly_added_df[col]
-            worksheet.append_rows(df_to_append.values.tolist(), value_input_option='USER_ENTERED')
-        return added_count
+                if col in df_to_upload.columns:
+                    df_aligned[col] = df_to_upload[col]
+            worksheet.append_rows(df_aligned.values.tolist(), value_input_option='USER_ENTERED')
+
+        # [최적화] 메모리에 있는 기존 데이터도 업데이트
+        df_existing_updated = pd.concat([df_existing, newly_added_df], ignore_index=True)
+        return added_count, df_existing_updated
+
     except Exception as e:
         print(f"\n시트 쓰기 중 오류 발생: {e}")
-        return -1
+        return -1, df_existing
 
 def main():
     if not SERVICE_KEY or not GOOGLE_CREDENTIALS_JSON:
@@ -155,13 +143,32 @@ def main():
     lawd_codes = get_lawd_codes(LAWD_CODE_FILE)
     if not lawd_codes: return
 
-    session = requests.Session()
-    session.mount('https://', CustomHttpAdapter())
-    
     creds = get_google_creds()
     if not creds: return
     
-    gc = gspread.service_account_from_dict(creds)
+    # [최적화] 구글 인증 및 시트 로딩을 맨 처음에 딱 한 번만 수행
+    try:
+        gc = gspread.service_account_from_dict(creds)
+        sh = gc.open(GOOGLE_SHEET_NAME)
+        worksheet = sh.get_worksheet(0)
+        print("구글 시트에서 기존 데이터를 딱 한 번만 읽어옵니다...")
+        existing_records = worksheet.get_all_records()
+        df_existing = pd.DataFrame(existing_records)
+        if not df_existing.empty:
+            df_existing.columns = df_existing.columns.str.strip()
+    except gspread.exceptions.SpreadsheetNotFound:
+        print(f"경고: '{GOOGLE_SHEET_NAME}' 시트를 찾을 수 없어 새로 생성합니다.")
+        df_existing = pd.DataFrame()
+        worksheet = gc.create(GOOGLE_SHEET_NAME).get_worksheet(0)
+        service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
+        if service_account_email: sh.share(service_account_email, perm_type='user', role='writer')
+    except Exception as e:
+        print(f"구글 시트 초기화 중 오류 발생: {e}")
+        return
+
+    session = requests.Session()
+    session.mount('https://', CustomHttpAdapter())
+    
     total_added_count = 0
     
     for month in MONTHS_TO_FETCH:
@@ -170,16 +177,20 @@ def main():
         for i, code in enumerate(lawd_codes):
             print(f"\r  [{i+1}/{len(lawd_codes)}] {code} 수집 중...", end="", flush=True)
             region_data = fetch_data_for_region(session, code, month, SERVICE_KEY)
-            if region_data:
-                monthly_data.extend(region_data)
-            time.sleep(0.1)
+            if region_data: monthly_data.extend(region_data)
+            time.sleep(0.05)
+        
         if not monthly_data:
             print(f"\n{month}월에 수집된 데이터가 없습니다.")
             continue
+
         df_month = pd.DataFrame(monthly_data)
         df_month.columns = df_month.columns.str.strip()
-        print(f"\n{month}월 데이터 총 {len(df_month)}건 수집 완료. 구글 시트 업데이트를 시작합니다.")
-        added_count = update_google_sheet(df_month, gc)
+        print(f"\n{month}월 데이터 총 {len(df_month)}건 수집 완료.")
+        
+        # [최적화] 함수 호출 시, 메모리에 있는 df_existing 전달
+        added_count, df_existing = find_and_upload_new_data(df_month, df_existing, worksheet)
+        
         if added_count > 0:
             total_added_count += added_count
             print(f"{month}월 데이터 중 {added_count}건 신규 추가 완료.")
