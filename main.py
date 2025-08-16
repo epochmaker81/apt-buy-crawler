@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (메모리 문제 해결 + 디버깅 메시지 강화) >>>
+# <<< 최종 버전 main.py (날짜 자동 생성 + 메모리 문제 해결 + 디버깅 강화) >>>
 
 import os
 import requests
@@ -29,6 +29,8 @@ GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev'
 
+# --- 설정: 수집할 연월 동적 생성 (최근 3개월) --- ## <--- 바로 이 부분입니다! ##
+# 이 코드가 실행되면 오늘 날짜를 기준으로 ['202408', '202407', '202406'] 와 같은 리스트가 자동으로 만들어집니다.
 today_kst = datetime.utcnow() + timedelta(hours=9)
 MONTHS_TO_FETCH = []
 for i in range(3):
