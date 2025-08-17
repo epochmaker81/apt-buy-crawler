@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (오타 수정 완료) >>>
+# <<< 최종 버전 main.py (User-Agent 추가로 봇 차단 우회) >>>
 
 import os
 import requests
@@ -75,7 +75,7 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             return all_items
         except requests.exceptions.RequestException as e:
             print(f"\n  [네트워크 오류] 지역코드: {lawd_cd} (시도 {attempt + 1}/3). 오류 유형: {type(e).__name__}")
-            time.sleep(3)
+            time.sleep(5) # 재시도 간격을 5초로 늘림
         except ET.ParseError as e:
             print(f"\n  [XML 파싱 오류] 지역코드: {lawd_cd}, 오류: {e}")
             return []
@@ -86,10 +86,7 @@ def create_unique_id(df):
     if df.empty: return df
     id_cols = ['거래금액', '년', '월', '일', '전용면적', '지번', '층', '법정동시군구코드', '법정동읍면동코드']
     valid_cols = [col for col in id_cols if col in df.columns]
-
-    ## [수정] agg('_'.join', axis=1) 에서 오타 수정 ##
     df['unique_id'] = df[valid_cols].astype(str).agg('_'.join, axis=1)
-    
     return df
 
 def find_and_upload_new_data(df_new, df_existing, worksheet):
@@ -156,6 +153,11 @@ def main():
 
     session = requests.Session()
     session.mount('https://', CustomHttpAdapter())
+    
+    ## [수정] 일반적인 브라우저처럼 보이게 User-Agent 헤더 추가 ##
+    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'}
+    session.headers.update(headers)
+
     total_added_count = 0
     
     for month in MONTHS_TO_FETCH:
