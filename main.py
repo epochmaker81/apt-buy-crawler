@@ -145,7 +145,7 @@ def main():
             df_existing.columns = df_existing.columns.str.strip()
     except gspread.exceptions.SpreadsheetNotFound:
         sh = gc.create(GOOGLE_SHEET_NAME)
-        worksheet = sh.get_worksheet(0)
+        worksheet = sh.get_ worksheet(0)
         df_existing = pd.DataFrame()
         service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
         if service_account_email: sh.share(service_account_email, perm_type='user', role='writer')
