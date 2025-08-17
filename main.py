@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (API 과부하 방지) >>>
+# <<< 최종 버전 main.py (오타 수정 완료) >>>
 
 import os
 import requests
@@ -86,12 +86,14 @@ def create_unique_id(df):
     if df.empty: return df
     id_cols = ['거래금액', '년', '월', '일', '전용면적', '지번', '층', '법정동시군구코드', '법정동읍면동코드']
     valid_cols = [col for col in id_cols if col in df.columns]
-    df['unique_id'] = df[valid_cols].astype(str).agg('_'.join', axis=1)
+
+    ## [수정] agg('_'.join', axis=1) 에서 오타 수정 ##
+    df['unique_id'] = df[valid_cols].astype(str).agg('_'.join, axis=1)
+    
     return df
 
 def find_and_upload_new_data(df_new, df_existing, worksheet):
     if df_new.empty:
-        # print("업데이트할 신규 데이터가 없습니다.") # 로그가 너무 많이 찍히므로 주석 처리
         return 0, df_existing
     df_new = create_unique_id(df_new)
     if not df_existing.empty:
@@ -101,7 +103,6 @@ def find_and_upload_new_data(df_new, df_existing, worksheet):
     else:
         newly_added_df = df_new.copy()
     if newly_added_df.empty:
-        # print("추가할 새로운 거래 데이터가 없습니다.") # 로그가 너무 많이 찍히므로 주석 처리
         return 0, df_existing
     added_count = len(newly_added_df)
     print(f"\n총 {added_count}건의 신규 데이터를 확인했습니다. 시트에 추가합니다.")
@@ -164,8 +165,6 @@ def main():
             print(f"\r  [{i+1}/{len(lawd_codes)}] {code} 수집 중...", end="", flush=True)
             region_data = fetch_data_for_region(session, code, month, SERVICE_KEY)
             if region_data: monthly_data.extend(region_data)
-            
-            ## [수정] 서버 부하를 줄이기 위해 각 요청 사이에 딜레이 추가 ##
             time.sleep(0.2) 
         
         if not monthly_data:
