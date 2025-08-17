@@ -1,4 +1,4 @@
-# <<< 최종 버전 main.py (구글 시트 조회 최적화) >>>
+# <<< 최종 버전 main.py (API 과부하 방지) >>>
 
 import os
 import requests
@@ -86,36 +86,28 @@ def create_unique_id(df):
     if df.empty: return df
     id_cols = ['거래금액', '년', '월', '일', '전용면적', '지번', '층', '법정동시군구코드', '법정동읍면동코드']
     valid_cols = [col for col in id_cols if col in df.columns]
-    df['unique_id'] = df[valid_cols].astype(str).agg('_'.join, axis=1)
+    df['unique_id'] = df[valid_cols].astype(str).agg('_'.join', axis=1)
     return df
 
-# [최적화] 함수 구조 변경: 기존 데이터프레임을 파라미터로 받도록 수정
 def find_and_upload_new_data(df_new, df_existing, worksheet):
     if df_new.empty:
-        print("업데이트할 신규 데이터가 없습니다.")
+        # print("업데이트할 신규 데이터가 없습니다.") # 로그가 너무 많이 찍히므로 주석 처리
         return 0, df_existing
-
     df_new = create_unique_id(df_new)
     if not df_existing.empty:
-        # unique_id가 없는 경우를 대비하여 미리 생성
         if 'unique_id' not in df_existing.columns:
             df_existing = create_unique_id(df_existing)
         newly_added_df = df_new[~df_new['unique_id'].isin(df_existing['unique_id'])].copy()
     else:
         newly_added_df = df_new.copy()
-
     if newly_added_df.empty:
-        print("추가할 새로운 거래 데이터가 없습니다.")
+        # print("추가할 새로운 거래 데이터가 없습니다.") # 로그가 너무 많이 찍히므로 주석 처리
         return 0, df_existing
-    
     added_count = len(newly_added_df)
     print(f"\n총 {added_count}건의 신규 데이터를 확인했습니다. 시트에 추가합니다.")
-    
-    # 원본 데이터프레임에서 unique_id 컬럼 제거
     df_to_upload = newly_added_df.drop(columns=['unique_id'])
-    
     try:
-        if worksheet.row_count == 1 and worksheet.col_count == 1: # 완전히 비어있는 시트
+        if worksheet.row_count == 1 and worksheet.col_count == 1:
              set_with_dataframe(worksheet, df_to_upload, include_index=False, allow_formulas=False)
         else:
             sheet_headers = [col.strip() for col in worksheet.row_values(1)]
@@ -124,11 +116,8 @@ def find_and_upload_new_data(df_new, df_existing, worksheet):
                 if col in df_to_upload.columns:
                     df_aligned[col] = df_to_upload[col]
             worksheet.append_rows(df_aligned.values.tolist(), value_input_option='USER_ENTERED')
-
-        # [최적화] 메모리에 있는 기존 데이터도 업데이트
         df_existing_updated = pd.concat([df_existing, newly_added_df], ignore_index=True)
         return added_count, df_existing_updated
-
     except Exception as e:
         print(f"\n시트 쓰기 중 오류 발생: {e}")
         return -1, df_existing
@@ -137,17 +126,14 @@ def main():
     if not SERVICE_KEY or not GOOGLE_CREDENTIALS_JSON:
         print("오류: SERVICE_KEY 또는 GOOGLE_CREDENTIALS_JSON Secret이 설정되지 않았습니다.")
         return
-
     print(f"===== 전국 아파트 실거래가 업데이트 시작 (대상 월: {MONTHS_TO_FETCH}) =====")
     
     lawd_codes = get_lawd_codes(LAWD_CODE_FILE)
     if not lawd_codes: return
-
-    creds = get_google_creds()
-    if not creds: return
     
-    # [최적화] 구글 인증 및 시트 로딩을 맨 처음에 딱 한 번만 수행
     try:
+        creds = get_google_creds()
+        if not creds: return
         gc = gspread.service_account_from_dict(creds)
         sh = gc.open(GOOGLE_SHEET_NAME)
         worksheet = sh.get_worksheet(0)
@@ -158,8 +144,9 @@ def main():
             df_existing.columns = df_existing.columns.str.strip()
     except gspread.exceptions.SpreadsheetNotFound:
         print(f"경고: '{GOOGLE_SHEET_NAME}' 시트를 찾을 수 없어 새로 생성합니다.")
+        sh = gc.create(GOOGLE_SHEET_NAME)
+        worksheet = sh.get_worksheet(0)
         df_existing = pd.DataFrame()
-        worksheet = gc.create(GOOGLE_SHEET_NAME).get_worksheet(0)
         service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
         if service_account_email: sh.share(service_account_email, perm_type='user', role='writer')
     except Exception as e:
@@ -168,7 +155,6 @@ def main():
 
     session = requests.Session()
     session.mount('https://', CustomHttpAdapter())
-    
     total_added_count = 0
     
     for month in MONTHS_TO_FETCH:
@@ -178,7 +164,9 @@ def main():
             print(f"\r  [{i+1}/{len(lawd_codes)}] {code} 수집 중...", end="", flush=True)
             region_data = fetch_data_for_region(session, code, month, SERVICE_KEY)
             if region_data: monthly_data.extend(region_data)
-            time.sleep(0.05)
+            
+            ## [수정] 서버 부하를 줄이기 위해 각 요청 사이에 딜레이 추가 ##
+            time.sleep(0.2) 
         
         if not monthly_data:
             print(f"\n{month}월에 수집된 데이터가 없습니다.")
@@ -188,7 +176,6 @@ def main():
         df_month.columns = df_month.columns.str.strip()
         print(f"\n{month}월 데이터 총 {len(df_month)}건 수집 완료.")
         
-        # [최적화] 함수 호출 시, 메모리에 있는 df_existing 전달
         added_count, df_existing = find_and_upload_new_data(df_month, df_existing, worksheet)
         
         if added_count > 0:
