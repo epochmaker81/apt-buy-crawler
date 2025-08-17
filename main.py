@@ -1,4 +1,4 @@
-# <<< 모든 문제 해결 최종 버전 main.py >>>
+# <<< 모든 문제 해결 최종 버전 main.py (오타 수정 완료) >>>
 
 import os
 import requests
@@ -28,11 +28,8 @@ SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
-
-## [가장 중요한 수정] 운영 계정용 URL로 변경 (Dev 제거) ##
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
 
-## [수정] 날짜 자동 생성 ##
 today_kst = datetime.utcnow() + timedelta(hours=9)
 MONTHS_TO_FETCH = []
 for i in range(3):
@@ -145,7 +142,10 @@ def main():
             df_existing.columns = df_existing.columns.str.strip()
     except gspread.exceptions.SpreadsheetNotFound:
         sh = gc.create(GOOGLE_SHEET_NAME)
-        worksheet = sh.get_ worksheet(0)
+        
+        ## [수정] sh.get_ worksheet(0) 오타 수정 ##
+        worksheet = sh.get_worksheet(0)
+        
         df_existing = pd.DataFrame()
         service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
         if service_account_email: sh.share(service_account_email, perm_type='user', role='writer')
