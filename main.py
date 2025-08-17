@@ -1,4 +1,4 @@
-# <<< 모든 문제 해결 최종 버전 main.py (오타 수정 완료) >>>
+# <<< 진짜 최종! 검증 완료된 main.py 코드 >>>
 
 import os
 import requests
@@ -66,7 +66,8 @@ def fetch_data_for_region(session, lawd_cd, deal_ymd, service_key):
             result_code_element = root.find('header/resultCode')
             if result_code_element is None or result_code_element.text != '00':
                 if result_code_element is None or result_code_element.text != '99':
-                    msg = root.find('header/resultMsg').text
+                    msg_element = root.find('header/resultMsg')
+                    msg = msg_element.text if msg_element is not None else "메시지 없음"
                     print(f"\n  [API 응답 오류] 지역코드: {lawd_cd}, 메시지: {msg}")
                 return []
             items_element = root.find('body/items')
@@ -105,7 +106,7 @@ def find_and_upload_new_data(df_new, df_existing, worksheet):
     print(f"\n총 {added_count}건의 신규 데이터를 확인했습니다. 시트에 추가합니다.")
     df_to_upload = newly_added_df.drop(columns=['unique_id'])
     try:
-        if worksheet.row_count < 2 :
+        if worksheet.row_count < 2:
              set_with_dataframe(worksheet, df_to_upload, include_index=False, allow_formulas=False)
         else:
             sheet_headers = [col.strip() for col in worksheet.row_values(1)]
@@ -142,10 +143,7 @@ def main():
             df_existing.columns = df_existing.columns.str.strip()
     except gspread.exceptions.SpreadsheetNotFound:
         sh = gc.create(GOOGLE_SHEET_NAME)
-        
-        ## [수정] sh.get_ worksheet(0) 오타 수정 ##
         worksheet = sh.get_worksheet(0)
-        
         df_existing = pd.DataFrame()
         service_account_email = os.getenv('GSPREAD_SERVICE_ACCOUNT_EMAIL')
         if service_account_email: sh.share(service_account_email, perm_type='user', role='writer')
