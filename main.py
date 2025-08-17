@@ -1,4 +1,4 @@
-# <<< 진짜 최종! 검증 완료된 main.py 코드 >>>
+# <<< 모든 문제 해결 최종 버전 main.py >>>
 
 import os
 import requests
@@ -28,8 +28,11 @@ SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
+
+## [가장 중요한 수정] 운영 계정용 URL로 변경 (Dev 제거) ##
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
 
+## [수정] 날짜 자동 생성 ##
 today_kst = datetime.utcnow() + timedelta(hours=9)
 MONTHS_TO_FETCH = []
 for i in range(3):
