@@ -30,7 +30,7 @@ today_kst = datetime.utcnow() + timedelta(hours=9)
 
 if RUN_MODE == 'TEST':
     MONTHS_TO_FETCH = [today_kst.strftime('%Y%m')]
-    TARGET_REGIONS = ['11110', '11140', '11170']  # 서울 3개 구
+    TARGET_REGIONS = ['11110']  # 종로구 1개만 테스트
 elif RUN_MODE == 'QUICK':
     MONTHS_TO_FETCH = [today_kst.strftime('%Y%m')]
     TARGET_REGIONS = None
@@ -48,7 +48,7 @@ def get_google_creds():
         return None
     try:
         creds = json.loads(GOOGLE_CREDENTIALS_JSON)
-        logger.info(f"✅ Google 인증 정보 로드 성공 - 프로젝트: {creds.get('project_id', 'Unknown')}")
+        logger.info(f"✅ Google 인증 정보 로드 성공")
         return creds
     except json.JSONDecodeError as e:
         logger.error(f"❌ GOOGLE_CREDENTIALS_JSON 파싱 오류: {e}")
@@ -100,99 +100,103 @@ def get_lawd_codes(filepath):
         logger.error(f"❌ 지역 코드 파일 읽기 오류: {e}")
         return []
 
-def test_api_connection(lawd_cd, deal_ymd, service_key):
-    """API 연결 테스트"""
-    logger.info(f"🧪 API 연결 테스트: {lawd_cd} - {deal_ymd}")
+def fetch_data_with_debug(lawd_cd, deal_ymd, service_key):
+    """상세 디버깅이 포함된 데이터 수집"""
+    print(f"🔄 [{lawd_cd}] 데이터 수집 시도...")
     
     params = {
         'serviceKey': service_key,
         'LAWD_CD': lawd_cd,
         'DEAL_YMD': deal_ymd,
         'pageNo': '1',
-        'numOfRows': '5'
+        'numOfRows': '100'
     }
     
     try:
+        print(f"📡 [{lawd_cd}] API 호출 중...")
         response = requests.get(BASE_URL, params=params, timeout=30)
-        logger.info(f"📡 HTTP 상태: {response.status_code}")
+        
+        print(f"📡 [{lawd_cd}] HTTP 상태: {response.status_code}")
+        logger.info(f"HTTP 응답: {response.status_code} - {len(response.content)} bytes")
         
         if response.status_code == 200:
-            root = ET.fromstring(response.content)
-            result_code = root.find('.//resultCode')
-            result_msg = root.find('.//resultMsg')
+            print(f"📄 [{lawd_cd}] 응답 내용 분석 중...")
             
-            if result_code is not None:
-                code = result_code.text
-                msg = result_msg.text if result_msg is not None else "메시지 없음"
-                logger.info(f"🎯 API 응답: {code} - {msg}")
+            # 응답 내용 로깅 (처음 500자)
+            logger.info(f"응답 내용 (첫 500자): {response.text[:500]}")
+            
+            try:
+                root = ET.fromstring(response.content)
+                result_code = root.find('.//resultCode')
+                result_msg = root.find('.//resultMsg')
                 
-                if code == '00':
-                    items = root.findall('.//item')
-                    logger.info(f"✅ API 테스트 성공! 아이템 수: {len(items)}")
-                    return True
-                elif code == '99':
-                    logger.info(f"⚠️ 데이터 없음 (정상) - {lawd_cd}")
-                    return True
-                elif code == '04':
-                    logger.error(f"❌ SERVICE_KEY 오류")
-                    return False
-                elif code == '05':
-                    logger.error(f"❌ 서비스 접근 권한 없음")
-                    return False
+                if result_code is not None:
+                    code = result_code.text
+                    msg = result_msg.text if result_msg is not None else "메시지 없음"
+                    
+                    print(f"🎯 [{lawd_cd}] 결과 코드: {code} - {msg}")
+                    logger.info(f"API 응답 코드: {code} - {msg}")
+                    
+                    if code == '00':
+                        # 성공 - 데이터 추출
+                        items_element = root.find('.//items')
+                        if items_element:
+                            items = items_element.findall('item')
+                            print(f"✅ [{lawd_cd}] 성공! {len(items)}건 발견")
+                            
+                            items_data = []
+                            for item in items:
+                                item_dict = {}
+                                for child in item:
+                                    item_dict[child.tag] = child.text.strip() if child.text else ''
+                                items_data.append(item_dict)
+                            
+                            # 첫 번째 아이템 정보 로깅
+                            if items_data:
+                                logger.info(f"첫 번째 아이템 키: {list(items_data[0].keys())}")
+                                logger.info(f"첫 번째 아이템 샘플: {dict(list(items_data[0].items())[:3])}")
+                            
+                            return items_data
+                        else:
+                            print(f"⚠️ [{lawd_cd}] items 엘리먼트 없음")
+                            return []
+                    elif code == '99':
+                        print(f"📭 [{lawd_cd}] 데이터 없음 (정상)")
+                        return []
+                    elif code == '04':
+                        print(f"❌ [{lawd_cd}] SERVICE_KEY 오류")
+                        logger.error("SERVICE_KEY 인증 오류")
+                        return []
+                    elif code == '05':
+                        print(f"❌ [{lawd_cd}] 서비스 접근 권한 없음")
+                        logger.error("서비스 접근 권한 없음")
+                        return []
+                    else:
+                        print(f"❌ [{lawd_cd}] 기타 오류: {code}")
+                        logger.error(f"기타 API 오류: {code} - {msg}")
+                        return []
                 else:
-                    logger.error(f"❌ API 오류: {code} - {msg}")
-                    return False
-            else:
-                logger.error("❌ 결과 코드를 찾을 수 없음")
-                return False
-        else:
-            logger.error(f"❌ HTTP 오류: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ API 테스트 예외: {e}")
-        return False
-
-def fetch_data_simple(lawd_cd, deal_ymd, service_key):
-    """데이터 수집"""
-    params = {
-        'serviceKey': service_key,
-        'LAWD_CD': lawd_cd,
-        'DEAL_YMD': deal_ymd,
-        'pageNo': '1',
-        'numOfRows': '1000'
-    }
-    
-    try:
-        response = requests.get(BASE_URL, params=params, timeout=30)
-        
-        if response.status_code == 200:
-            root = ET.fromstring(response.content)
-            result_code = root.find('.//resultCode')
-            
-            if result_code is not None and result_code.text == '00':
-                items_element = root.find('.//items')
-                if items_element:
-                    items_data = []
-                    for item in items_element.findall('item'):
-                        item_dict = {}
-                        for child in item:
-                            item_dict[child.tag] = child.text.strip() if child.text else ''
-                        items_data.append(item_dict)
-                    return items_data
-                else:
+                    print(f"❌ [{lawd_cd}] 결과 코드 없음")
+                    logger.error("API 응답에 결과 코드가 없음")
                     return []
-            elif result_code is not None and result_code.text == '99':
-                return []  # 데이터 없음
-            else:
-                logger.warning(f"⚠️ {lawd_cd} API 응답: {result_code.text if result_code is not None else 'Unknown'}")
+                    
+            except ET.ParseError as e:
+                print(f"❌ [{lawd_cd}] XML 파싱 오류")
+                logger.error(f"XML 파싱 오류: {e}")
+                logger.error(f"파싱 실패한 응답: {response.text[:200]}")
                 return []
         else:
-            logger.warning(f"⚠️ {lawd_cd} HTTP 오류: {response.status_code}")
+            print(f"❌ [{lawd_cd}] HTTP 오류: {response.status_code}")
+            logger.error(f"HTTP 오류: {response.status_code}")
             return []
             
+    except requests.exceptions.Timeout:
+        print(f"⏰ [{lawd_cd}] 타임아웃")
+        logger.error("요청 타임아웃")
+        return []
     except Exception as e:
-        logger.error(f"❌ {lawd_cd} 데이터 수집 오류: {str(e)[:50]}")
+        print(f"❌ [{lawd_cd}] 예외: {str(e)[:50]}")
+        logger.error(f"데이터 수집 예외: {e}")
         return []
 
 def create_unique_id(df):
@@ -210,11 +214,11 @@ def create_unique_id(df):
 def upload_to_sheet(df_new, df_existing, worksheet):
     """Google Sheets에 업로드"""
     if df_new.empty:
-        logger.info("📭 업로드할 새 데이터가 없습니다.")
+        print("📭 업로드할 데이터가 없습니다.")
         return 0, df_existing
     
-    logger.info(f"📊 새 데이터: {len(df_new)}건")
-    logger.info(f"📋 새 데이터 컬럼: {list(df_new.columns)}")
+    print(f"📊 새 데이터: {len(df_new)}건")
+    print(f"📋 컬럼: {list(df_new.columns)}")
     
     # 고유 ID 생성
     df_new = create_unique_id(df_new)
@@ -225,13 +229,13 @@ def upload_to_sheet(df_new, df_existing, worksheet):
         
         # 중복 제거
         newly_added = df_new[~df_new['unique_id'].isin(df_existing['unique_id'])].copy()
-        logger.info(f"🔍 중복 제거 후: {len(newly_added)}건")
+        print(f"🔍 중복 제거 후: {len(newly_added)}건")
     else:
         newly_added = df_new.copy()
-        logger.info("📝 기존 데이터 없음 - 모든 데이터 추가")
+        print("📝 기존 데이터 없음 - 모든 데이터 추가")
     
     if newly_added.empty:
-        logger.info("ℹ️ 추가할 새 데이터 없음 (모두 중복)")
+        print("ℹ️ 추가할 새 데이터 없음 (모두 중복)")
         return 0, df_existing
     
     count = len(newly_added)
@@ -239,10 +243,10 @@ def upload_to_sheet(df_new, df_existing, worksheet):
     
     try:
         if worksheet.row_count < 2:
-            logger.info("📝 빈 시트에 데이터 추가")
+            print("📝 빈 시트에 데이터 추가")
             set_with_dataframe(worksheet, df_to_upload, include_index=False)
         else:
-            logger.info("📝 기존 시트에 데이터 추가")
+            print("📝 기존 시트에 데이터 추가")
             headers = worksheet.row_values(1)
             
             # 헤더에 맞춰 데이터 정렬
@@ -256,11 +260,12 @@ def upload_to_sheet(df_new, df_existing, worksheet):
             worksheet.append_rows(aligned.values.tolist(), value_input_option='USER_ENTERED')
         
         df_existing_updated = pd.concat([df_existing, newly_added], ignore_index=True)
-        logger.info(f"✅ 업로드 성공: {count}건 추가됨")
+        print(f"✅ 업로드 성공: {count}건 추가됨")
         return count, df_existing_updated
         
     except Exception as e:
-        logger.error(f"❌ 업로드 오류: {e}")
+        print(f"❌ 업로드 오류: {e}")
+        logger.error(f"업로드 오류: {e}")
         logger.error(traceback.format_exc())
         return -1, df_existing
 
@@ -269,41 +274,28 @@ def main():
     start_time = time.time()
     
     print("🚀 ===== 아파트 실거래가 업데이트 시작 =====")
-    logger.info("🚀 아파트 실거래가 업데이트 시작")
-    logger.info(f"🔧 실행 모드: {RUN_MODE}")
-    logger.info(f"📅 대상 월: {MONTHS_TO_FETCH}")
+    print(f"🔧 실행 모드: {RUN_MODE}")
+    print(f"📅 대상 월: {MONTHS_TO_FETCH}")
     
     # 환경 변수 확인
     if not SERVICE_KEY:
-        logger.error("❌ SERVICE_KEY가 설정되지 않았습니다.")
         print("❌ SERVICE_KEY가 설정되지 않았습니다.")
         return
     
     if not GOOGLE_CREDENTIALS_JSON:
-        logger.error("❌ GOOGLE_CREDENTIALS_JSON이 설정되지 않았습니다.")
         print("❌ GOOGLE_CREDENTIALS_JSON이 설정되지 않았습니다.")
         return
     
-    logger.info(f"🔑 SERVICE_KEY 길이: {len(SERVICE_KEY)}")
-    print(f"✅ 환경 변수 확인 완료 - SERVICE_KEY: {len(SERVICE_KEY)}자")
+    print(f"✅ SERVICE_KEY: {len(SERVICE_KEY)}자")
+    print(f"✅ GOOGLE_CREDENTIALS_JSON: 설정됨")
     
     # 지역 코드 로드
     lawd_codes = get_lawd_codes(LAWD_CODE_FILE)
     if not lawd_codes:
-        logger.error("❌ 유효한 지역 코드가 없습니다.")
         print("❌ 유효한 지역 코드가 없습니다.")
         return
     
-    print(f"✅ 지역 코드 로드 완료: {len(lawd_codes)}개")
-    
-    # API 연결 테스트
-    print("🧪 API 연결 테스트 중...")
-    if not test_api_connection(lawd_codes[0], MONTHS_TO_FETCH[0], SERVICE_KEY):
-        logger.error("❌ API 연결 테스트 실패")
-        print("❌ API 연결 테스트 실패 - SERVICE_KEY를 확인하세요.")
-        return
-    
-    print("✅ API 연결 테스트 성공")
+    print(f"✅ 지역 코드: {len(lawd_codes)}개 - {lawd_codes}")
     
     # Google Sheets 초기화
     print("📊 Google Sheets 초기화 중...")
@@ -313,20 +305,18 @@ def main():
             return
         
         gc = gspread.service_account_from_dict(creds)
+        print("✅ Google Sheets 클라이언트 생성")
         
         try:
             sh = gc.open(GOOGLE_SHEET_NAME)
-            logger.info(f"✅ 기존 시트 열기: {GOOGLE_SHEET_NAME}")
+            print(f"✅ 기존 시트 열기: {GOOGLE_SHEET_NAME}")
         except gspread.exceptions.SpreadsheetNotFound:
             sh = gc.create(GOOGLE_SHEET_NAME)
-            logger.info(f"🆕 새 시트 생성: {GOOGLE_SHEET_NAME}")
+            print(f"🆕 새 시트 생성: {GOOGLE_SHEET_NAME}")
         
         worksheet = sh.get_worksheet(0)
-        
-        # 시트 URL 출력
         sheet_url = sh.url
-        logger.info(f"🔗 시트 URL: {sheet_url}")
-        print(f"🔗 구글 시트: {sheet_url}")
+        print(f"🔗 시트 URL: {sheet_url}")
         
         # 기존 데이터 읽기
         existing_records = worksheet.get_all_records()
@@ -334,49 +324,42 @@ def main():
         
         if not df_existing.empty:
             df_existing.columns = df_existing.columns.str.strip()
-            logger.info(f"📊 기존 데이터: {len(df_existing)}건")
             print(f"📊 기존 데이터: {len(df_existing)}건")
         else:
-            logger.info("📝 기존 데이터 없음")
-            print("📝 기존 데이터 없음 - 새로 시작")
+            print("📝 기존 데이터 없음")
             
     except Exception as e:
-        logger.error(f"❌ Google Sheets 초기화 오류: {e}")
-        logger.error(traceback.format_exc())
         print(f"❌ Google Sheets 오류: {e}")
+        logger.error(traceback.format_exc())
         return
     
     total_added = 0
     
     # 데이터 수집 및 업로드
     for month in MONTHS_TO_FETCH:
-        print(f"\n📅 {month} 데이터 수집 시작...")
-        logger.info(f"📅 {month} 처리 시작")
+        print(f"\n📅 ===== {month} 데이터 수집 =====")
         
         monthly_data = []
         
         for i, code in enumerate(lawd_codes):
-            print(f"🔄 [{i+1}/{len(lawd_codes)}] {code} 처리 중...")
-            data = fetch_data_simple(code, month, SERVICE_KEY)
+            print(f"\n[{i+1}/{len(lawd_codes)}] {code} 처리...")
+            data = fetch_data_with_debug(code, month, SERVICE_KEY)
             
             if data:
                 monthly_data.extend(data)
-                logger.info(f"✅ {code}: {len(data)}건 수집")
-                print(f"   ✅ {code}: {len(data)}건 수집")
+                print(f"   ✅ {len(data)}건 수집됨")
             else:
-                logger.info(f"📭 {code}: 데이터 없음")
-                print(f"   📭 {code}: 데이터 없음")
+                print(f"   📭 데이터 없음")
             
-            time.sleep(0.5)  # API 호출 간격
+            time.sleep(1)  # API 호출 간격
         
-        print(f"📊 {month} 총 수집: {len(monthly_data)}건")
-        logger.info(f"📊 {month} 총 수집: {len(monthly_data)}건")
+        print(f"\n📊 {month} 총 수집: {len(monthly_data)}건")
         
         if not monthly_data:
             print(f"⚠️ {month}: 수집된 데이터 없음")
             continue
         
-        # 데이터프레임 생성 및 업로드
+        # 데이터프레임 생성
         df_month = pd.DataFrame(monthly_data)
         df_month.columns = df_month.columns.str.strip()
         
@@ -386,31 +369,24 @@ def main():
         if added > 0:
             total_added += added
             print(f"✅ {month}: {added}건 추가됨")
-            logger.info(f"✅ {month}: {added}건 추가")
         elif added == 0:
-            print(f"ℹ️ {month}: 새로운 데이터 없음 (중복)")
-            logger.info(f"ℹ️ {month}: 중복으로 추가 없음")
+            print(f"ℹ️ {month}: 새로운 데이터 없음")
         else:
             print(f"❌ {month}: 업로드 실패")
-            logger.error(f"❌ {month}: 업로드 실패")
     
     # 완료
     elapsed = time.time() - start_time
     print(f"\n🎉 ===== 완료 =====")
     print(f"📊 총 {total_added}건 추가")
     print(f"⏱️ 소요 시간: {elapsed//60:.0f}분 {elapsed%60:.0f}초")
-    print(f"🔗 결과 확인: {sheet_url}")
-    
-    logger.info(f"🎉 완료 - 총 {total_added}건 추가, {elapsed//60:.0f}분 {elapsed%60:.0f}초")
+    print(f"🔗 결과: {sheet_url}")
     
     if total_added == 0:
         print("\n⚠️ 새로 추가된 데이터가 없습니다.")
         print("가능한 원인:")
-        print("1. 해당 월에 실거래 데이터가 없음")
-        print("2. 이미 모든 데이터가 시트에 존재")
-        logger.warning("새로 추가된 데이터 없음")
-    else:
-        print(f"\n🎉 성공! Google Sheets에서 결과를 확인하세요!")
+        print("1. SERVICE_KEY 권한 문제")
+        print("2. 해당 월에 실거래 데이터가 없음")
+        print("3. 이미 모든 데이터가 시트에 존재")
 
 if __name__ == '__main__':
     main()
