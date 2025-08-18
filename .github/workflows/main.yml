@@ -1,11 +1,10 @@
-# <<< 최종 버전 .github/workflows/main.yml >>>
+# <<< 최종 디버깅 버전 .github/workflows/main.yml >>>
 
 name: Daily Apartment Data Update
 
 on:
-  workflow_dispatch: # 수동 실행을 위한 버튼 제공
+  workflow_dispatch:
   schedule:
-    # cron 표현식 (UTC 기준). 아래는 매일 오전 7시(KST)에 실행됩니다.
     - cron: '0 22 * * *'
 
 jobs:
@@ -25,9 +24,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      ## [가장 중요한 수정] ##
+      # 파이썬 스크립트를 실행하기 전에,
+      # Actions가 보고 있는 main.py 파일의 내용을 그대로 출력합니다.
+      - name: View main.py content
+        run: cat main.py
+
       - name: Run Python script to update data
         env:
-          # GitHub Secrets 값을 파이썬 스크립트의 환경 변수로 전달
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           GSPREAD_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GSPREAD_SERVICE_ACCOUNT_EMAIL }}
