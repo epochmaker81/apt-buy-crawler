@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import logging
 import traceback
+import urllib3
+
+# SSL 경고 무시
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,7 +24,7 @@ SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
 LAWD_CODE_FILE = 'lawd_code.csv'
-BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
+BASE_URL = 'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
 
 # 실행 모드 설정
 RUN_MODE = os.getenv('RUN_MODE', 'TEST')
@@ -30,7 +34,7 @@ today_kst = datetime.utcnow() + timedelta(hours=9)
 
 if RUN_MODE == 'TEST':
     MONTHS_TO_FETCH = [today_kst.strftime('%Y%m')]
-    TARGET_REGIONS = ['11110']  # 종로구 1개만 테스트
+    TARGET_REGIONS = ['11110']  # 종로구 1개만
 elif RUN_MODE == 'QUICK':
     MONTHS_TO_FETCH = [today_kst.strftime('%Y%m')]
     TARGET_REGIONS = None
@@ -48,7 +52,7 @@ def get_google_creds():
         return None
     try:
         creds = json.loads(GOOGLE_CREDENTIALS_JSON)
-        logger.info(f"✅ Google 인증 정보 로드 성공")
+        logger.info("✅ Google 인증 정보 로드 성공")
         return creds
     except json.JSONDecodeError as e:
         logger.error(f"❌ GOOGLE_CREDENTIALS_JSON 파싱 오류: {e}")
@@ -74,7 +78,7 @@ def get_lawd_codes(filepath):
         valid_codes = []
         for code in codes:
             if code and code != 'nan' and len(code) == 5 and code.isdigit():
-                if not code.endswith('000'):  # 광역시도 코드 제외
+                if not code.endswith('000'):
                     valid_codes.append(code)
         
         logger.info(f"✅ 유효한 지역 코드: {len(valid_codes)}개")
@@ -100,8 +104,63 @@ def get_lawd_codes(filepath):
         logger.error(f"❌ 지역 코드 파일 읽기 오류: {e}")
         return []
 
-def fetch_data_with_debug(lawd_cd, deal_ymd, service_key):
-    """상세 디버깅이 포함된 데이터 수집"""
+def create_session():
+    """안전한 HTTP 세션 생성"""
+    session = requests.Session()
+    
+    # HTTP 헤더 설정
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/xml, text/xml, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache'
+    })
+    
+    # SSL 설정
+    session.verify = False
+    
+    # 어댑터 설정 (재시도 로직)
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    return session
+
+def test_network_connection():
+    """네트워크 연결 테스트"""
+    print("🌐 네트워크 연결 테스트 중...")
+    
+    test_urls = [
+        'http://www.google.com',
+        'http://openapi.molit.go.kr',
+        'https://openapi.molit.go.kr'
+    ]
+    
+    session = create_session()
+    
+    for url in test_urls:
+        try:
+            print(f"📡 {url} 테스트...")
+            response = session.get(url, timeout=10)
+            print(f"   ✅ {url}: {response.status_code}")
+        except Exception as e:
+            print(f"   ❌ {url}: {str(e)[:50]}")
+    
+    session.close()
+
+def fetch_data_robust(lawd_cd, deal_ymd, service_key):
+    """강화된 데이터 수집 (네트워크 문제 해결)"""
     print(f"🔄 [{lawd_cd}] 데이터 수집 시도...")
     
     params = {
@@ -112,92 +171,115 @@ def fetch_data_with_debug(lawd_cd, deal_ymd, service_key):
         'numOfRows': '100'
     }
     
-    try:
-        print(f"📡 [{lawd_cd}] API 호출 중...")
-        response = requests.get(BASE_URL, params=params, timeout=30)
+    # HTTP와 HTTPS 둘 다 시도
+    urls_to_try = [
+        'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade',
+        'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
+    ]
+    
+    for url_idx, url in enumerate(urls_to_try):
+        print(f"🌐 [{lawd_cd}] URL {url_idx+1}/2 시도: {'HTTP' if url_idx == 0 else 'HTTPS'}")
         
-        print(f"📡 [{lawd_cd}] HTTP 상태: {response.status_code}")
-        logger.info(f"HTTP 응답: {response.status_code} - {len(response.content)} bytes")
-        
-        if response.status_code == 200:
-            print(f"📄 [{lawd_cd}] 응답 내용 분석 중...")
-            
-            # 응답 내용 로깅 (처음 500자)
-            logger.info(f"응답 내용 (첫 500자): {response.text[:500]}")
-            
+        # 세션별로 여러 번 시도
+        for attempt in range(3):
+            session = None
             try:
-                root = ET.fromstring(response.content)
-                result_code = root.find('.//resultCode')
-                result_msg = root.find('.//resultMsg')
+                print(f"   📡 [{lawd_cd}] 시도 {attempt+1}/3...")
                 
-                if result_code is not None:
-                    code = result_code.text
-                    msg = result_msg.text if result_msg is not None else "메시지 없음"
+                session = create_session()
+                
+                response = session.get(
+                    url,
+                    params=params,
+                    timeout=30,
+                    verify=False
+                )
+                
+                print(f"   📡 [{lawd_cd}] HTTP 상태: {response.status_code}")
+                
+                if response.status_code == 200:
+                    print(f"   📄 [{lawd_cd}] 응답 수신 성공 ({len(response.content)} bytes)")
                     
-                    print(f"🎯 [{lawd_cd}] 결과 코드: {code} - {msg}")
-                    logger.info(f"API 응답 코드: {code} - {msg}")
-                    
-                    if code == '00':
-                        # 성공 - 데이터 추출
-                        items_element = root.find('.//items')
-                        if items_element:
-                            items = items_element.findall('item')
-                            print(f"✅ [{lawd_cd}] 성공! {len(items)}건 발견")
+                    try:
+                        root = ET.fromstring(response.content)
+                        result_code = root.find('.//resultCode')
+                        result_msg = root.find('.//resultMsg')
+                        
+                        if result_code is not None:
+                            code = result_code.text
+                            msg = result_msg.text if result_msg is not None else "메시지 없음"
                             
-                            items_data = []
-                            for item in items:
-                                item_dict = {}
-                                for child in item:
-                                    item_dict[child.tag] = child.text.strip() if child.text else ''
-                                items_data.append(item_dict)
+                            print(f"   🎯 [{lawd_cd}] API 결과: {code} - {msg}")
                             
-                            # 첫 번째 아이템 정보 로깅
-                            if items_data:
-                                logger.info(f"첫 번째 아이템 키: {list(items_data[0].keys())}")
-                                logger.info(f"첫 번째 아이템 샘플: {dict(list(items_data[0].items())[:3])}")
-                            
-                            return items_data
+                            if code == '00':
+                                # 성공
+                                items_element = root.find('.//items')
+                                if items_element:
+                                    items = items_element.findall('item')
+                                    print(f"   ✅ [{lawd_cd}] 성공! {len(items)}건 수집")
+                                    
+                                    items_data = []
+                                    for item in items:
+                                        item_dict = {}
+                                        for child in item:
+                                            item_dict[child.tag] = child.text.strip() if child.text else ''
+                                        items_data.append(item_dict)
+                                    
+                                    if items_data:
+                                        print(f"   📊 [{lawd_cd}] 첫 번째 데이터 컬럼: {list(items_data[0].keys())[:5]}...")
+                                    
+                                    session.close()
+                                    return items_data
+                                else:
+                                    print(f"   📭 [{lawd_cd}] items 엘리먼트 없음")
+                                    session.close()
+                                    return []
+                            elif code == '99':
+                                print(f"   📭 [{lawd_cd}] 데이터 없음 (정상)")
+                                session.close()
+                                return []
+                            elif code == '04':
+                                print(f"   ❌ [{lawd_cd}] SERVICE_KEY 오류")
+                                session.close()
+                                return []
+                            elif code == '05':
+                                print(f"   ❌ [{lawd_cd}] 접근 권한 없음")
+                                session.close()
+                                return []
+                            else:
+                                print(f"   ❌ [{lawd_cd}] API 오류: {code}")
+                                session.close()
+                                return []
                         else:
-                            print(f"⚠️ [{lawd_cd}] items 엘리먼트 없음")
-                            return []
-                    elif code == '99':
-                        print(f"📭 [{lawd_cd}] 데이터 없음 (정상)")
-                        return []
-                    elif code == '04':
-                        print(f"❌ [{lawd_cd}] SERVICE_KEY 오류")
-                        logger.error("SERVICE_KEY 인증 오류")
-                        return []
-                    elif code == '05':
-                        print(f"❌ [{lawd_cd}] 서비스 접근 권한 없음")
-                        logger.error("서비스 접근 권한 없음")
-                        return []
-                    else:
-                        print(f"❌ [{lawd_cd}] 기타 오류: {code}")
-                        logger.error(f"기타 API 오류: {code} - {msg}")
-                        return []
+                            print(f"   ❌ [{lawd_cd}] 결과 코드 없음")
+                            
+                    except ET.ParseError as e:
+                        print(f"   ❌ [{lawd_cd}] XML 파싱 오류: {str(e)[:30]}")
+                        print(f"   📄 응답 내용 (첫 200자): {response.text[:200]}")
+                        
                 else:
-                    print(f"❌ [{lawd_cd}] 결과 코드 없음")
-                    logger.error("API 응답에 결과 코드가 없음")
-                    return []
+                    print(f"   ❌ [{lawd_cd}] HTTP 오류: {response.status_code}")
                     
-            except ET.ParseError as e:
-                print(f"❌ [{lawd_cd}] XML 파싱 오류")
-                logger.error(f"XML 파싱 오류: {e}")
-                logger.error(f"파싱 실패한 응답: {response.text[:200]}")
-                return []
-        else:
-            print(f"❌ [{lawd_cd}] HTTP 오류: {response.status_code}")
-            logger.error(f"HTTP 오류: {response.status_code}")
-            return []
+            except requests.exceptions.ConnectTimeout:
+                print(f"   ⏰ [{lawd_cd}] 연결 타임아웃")
+            except requests.exceptions.ReadTimeout:
+                print(f"   ⏰ [{lawd_cd}] 읽기 타임아웃")
+            except requests.exceptions.ConnectionError as e:
+                print(f"   🌐 [{lawd_cd}] 연결 오류: {str(e)[:50]}")
+            except Exception as e:
+                print(f"   ❌ [{lawd_cd}] 예외: {str(e)[:50]}")
+            finally:
+                if session:
+                    session.close()
             
-    except requests.exceptions.Timeout:
-        print(f"⏰ [{lawd_cd}] 타임아웃")
-        logger.error("요청 타임아웃")
-        return []
-    except Exception as e:
-        print(f"❌ [{lawd_cd}] 예외: {str(e)[:50]}")
-        logger.error(f"데이터 수집 예외: {e}")
-        return []
+            # 재시도 전 대기
+            if attempt < 2:
+                wait_time = (attempt + 1) * 2
+                print(f"   ⏳ [{lawd_cd}] {wait_time}초 대기 후 재시도...")
+                time.sleep(wait_time)
+    
+    print(f"   ❌ [{lawd_cd}] 모든 시도 실패")
+    return []
 
 def create_unique_id(df):
     """고유 ID 생성"""
@@ -220,14 +302,12 @@ def upload_to_sheet(df_new, df_existing, worksheet):
     print(f"📊 새 데이터: {len(df_new)}건")
     print(f"📋 컬럼: {list(df_new.columns)}")
     
-    # 고유 ID 생성
     df_new = create_unique_id(df_new)
     
     if not df_existing.empty:
         if 'unique_id' not in df_existing.columns:
             df_existing = create_unique_id(df_existing)
         
-        # 중복 제거
         newly_added = df_new[~df_new['unique_id'].isin(df_existing['unique_id'])].copy()
         print(f"🔍 중복 제거 후: {len(newly_added)}건")
     else:
@@ -249,7 +329,6 @@ def upload_to_sheet(df_new, df_existing, worksheet):
             print("📝 기존 시트에 데이터 추가")
             headers = worksheet.row_values(1)
             
-            # 헤더에 맞춰 데이터 정렬
             aligned = pd.DataFrame(columns=headers)
             for col in headers:
                 if col in df_to_upload.columns:
@@ -266,7 +345,6 @@ def upload_to_sheet(df_new, df_existing, worksheet):
     except Exception as e:
         print(f"❌ 업로드 오류: {e}")
         logger.error(f"업로드 오류: {e}")
-        logger.error(traceback.format_exc())
         return -1, df_existing
 
 def main():
@@ -288,6 +366,9 @@ def main():
     
     print(f"✅ SERVICE_KEY: {len(SERVICE_KEY)}자")
     print(f"✅ GOOGLE_CREDENTIALS_JSON: 설정됨")
+    
+    # 네트워크 연결 테스트
+    test_network_connection()
     
     # 지역 코드 로드
     lawd_codes = get_lawd_codes(LAWD_CODE_FILE)
@@ -343,7 +424,7 @@ def main():
         
         for i, code in enumerate(lawd_codes):
             print(f"\n[{i+1}/{len(lawd_codes)}] {code} 처리...")
-            data = fetch_data_with_debug(code, month, SERVICE_KEY)
+            data = fetch_data_robust(code, month, SERVICE_KEY)
             
             if data:
                 monthly_data.extend(data)
@@ -351,12 +432,16 @@ def main():
             else:
                 print(f"   📭 데이터 없음")
             
-            time.sleep(1)  # API 호출 간격
+            time.sleep(2)  # API 호출 간격 증가
         
         print(f"\n📊 {month} 총 수집: {len(monthly_data)}건")
         
         if not monthly_data:
             print(f"⚠️ {month}: 수집된 데이터 없음")
+            print("가능한 원인:")
+            print("1. 네트워크 연결 문제")
+            print("2. SERVICE_KEY 권한 문제")
+            print("3. API 서버 일시적 문제")
             continue
         
         # 데이터프레임 생성
@@ -380,13 +465,6 @@ def main():
     print(f"📊 총 {total_added}건 추가")
     print(f"⏱️ 소요 시간: {elapsed//60:.0f}분 {elapsed%60:.0f}초")
     print(f"🔗 결과: {sheet_url}")
-    
-    if total_added == 0:
-        print("\n⚠️ 새로 추가된 데이터가 없습니다.")
-        print("가능한 원인:")
-        print("1. SERVICE_KEY 권한 문제")
-        print("2. 해당 월에 실거래 데이터가 없음")
-        print("3. 이미 모든 데이터가 시트에 존재")
 
 if __name__ == '__main__':
     main()
