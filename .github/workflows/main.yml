@@ -1,38 +1,79 @@
-# <<< 최종 디버깅 버전 .github/workflows/main.yml >>>
-
 name: Daily Apartment Data Update
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 수동 실행
   schedule:
-    - cron: '0 22 * * *'
+    - cron: '0 22 * * *'  # 매일 오후 10시 (한국시간 오전 7시)
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
+          
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      ## [가장 중요한 수정] ##
-      # 파이썬 스크립트를 실행하기 전에,
-      # Actions가 보고 있는 main.py 파일의 내용을 그대로 출력합니다.
-      - name: View main.py content
-        run: cat main.py
-
-      - name: Run Python script to update data
+          
+      - name: Check files
+        run: |
+          echo "=== 현재 디렉토리 파일 목록 ==="
+          ls -la
+          echo ""
+          echo "=== main.py 파일 내용 확인 ==="
+          if [ -f main.py ]; then
+            head -20 main.py
+            echo "..."
+            echo "(파일 존재 확인됨)"
+          else
+            echo "❌ main.py 파일이 없습니다!"
+          fi
+          echo ""
+          echo "=== lawd_code.csv 파일 확인 ==="
+          if [ -f lawd_code.csv ]; then
+            echo "✅ lawd_code.csv 파일 존재"
+            echo "행 수: $(wc -l < lawd_code.csv)"
+            echo "첫 5행:"
+            head -5 lawd_code.csv
+          else
+            echo "❌ lawd_code.csv 파일이 없습니다!"
+          fi
+          
+      - name: Check environment variables
+        run: |
+          echo "=== 환경 변수 확인 ==="
+          echo "SERVICE_KEY 존재: ${{ secrets.SERVICE_KEY != '' }}"
+          echo "GOOGLE_CREDENTIALS_JSON 존재: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' }}"
+          if [ -n "${{ secrets.SERVICE_KEY }}" ]; then
+            echo "SERVICE_KEY 길이: ${#SERVICE_KEY}"
+          fi
+          
+      - name: Run Python script
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-          GSPREAD_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GSPREAD_SERVICE_ACCOUNT_EMAIL }}
-        run: python main.py
+          RUN_MODE: TEST  # 테스트 모드로 실행
+        run: |
+          echo "=== Python 스크립트 실행 시작 ==="
+          python main.py
+          echo "=== Python 스크립트 실행 완료 ==="
+          
+      - name: Show execution results
+        if: always()  # 성공/실패 관계없이 항상 실행
+        run: |
+          echo "=== 실행 결과 요약 ==="
+          echo "작업 완료 시간: $(date)"
+          if [ -f debug.log ]; then
+            echo "디버그 로그 마지막 10행:"
+            tail -10 debug.log
+          else
+            echo "디버그 로그 파일 없음"
+          fi
