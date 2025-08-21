@@ -26,7 +26,7 @@ class CustomHttpAdapter(HTTPAdapter):
 # --- 설정 변수 ---
 SERVICE_KEY = os.getenv('SERVICE_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
-GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_누적'
+GOOGLE_SHEET_NAME = '전국 아파트 매매 실거래가_최근 2개월'
 LAWD_CODE_FILE = 'lawd_code.csv'
 
 BASE_URL = 'https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade'
@@ -212,3 +212,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
