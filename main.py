@@ -35,7 +35,7 @@ try:
     GOOGLE_CREDENTIALS_JSON = os.environ['GOOGLE_CREDENTIALS_JSON']
     
     # 자신의 구글 시트 및 워크시트 이름으로 변경하세요.
-    GOOGLE_SHEET_NAME = "아파트 실거래가 데이터" 
+    GOOGLE_SHEET_NAME = "전국 아파트 매매 실거래가_최근 2개월" 
     WORKSHEET_NAME = "raw_data"
 
 except KeyError as e:
@@ -197,3 +197,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
